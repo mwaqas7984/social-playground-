@@ -46,7 +46,7 @@ export class MatchingService {
 
   private async checkForMatch(onMatchFound: (roomId: string) => void) {
     try {
-      // Check if we're already matched
+      // First check if we're already matched
       const { data: existingMatch } = await this.supabase
         .from('matches')
         .select('*')
@@ -69,34 +69,57 @@ export class MatchingService {
 
       if (potentialMatches && potentialMatches.length > 0) {
         const match = potentialMatches[0];
-        const roomId = crypto.randomUUID();
         
-        console.log(`🤝 Found match! Creating room: ${roomId}`);
+        console.log(`🤝 Found potential match with user: ${match.user_id}`);
         
-        // Create the match
+        // Create a deterministic room ID based on both user IDs
+        const roomIds = [this.currentUserId, match.user_id].sort();
+        const roomId = `room-${roomIds[0]}-${roomIds[1]}`;
+        
+        console.log(`🏠 Creating deterministic room: ${roomId}`);
+        
+        // Try to create the match (only one will succeed due to race condition)
         const { error: matchError } = await this.supabase
           .from('matches')
-          .insert({
+          .upsert({
             room_id: roomId,
             user1_id: this.currentUserId,
             user2_id: match.user_id,
             created_at: new Date().toISOString()
+          }, {
+            onConflict: 'user1_id,user2_id'
           });
 
         if (matchError) {
-          console.error('❌ Failed to create match:', matchError);
-          return;
+          console.log('⚠️ Match creation failed (race condition), checking existing...');
+          
+          // Check if the other user already created the match
+          const { data: existingMatchAfterRace } = await this.supabase
+            .from('matches')
+            .select('*')
+            .or(`user1_id.eq.${this.currentUserId},user2_id.eq.${this.currentUserId}`)
+            .single();
+
+          if (existingMatchAfterRace) {
+            console.log('🎉 Found match after race condition:', existingMatchAfterRace.room_id);
+            onMatchFound(existingMatchAfterRace.room_id);
+            this.leaveQueue();
+            return;
+          }
         }
 
-        // Remove both users from queue
-        await this.supabase
-          .from('matching_queue')
-          .delete()
-          .in('user_id', [this.currentUserId, match.user_id]);
+        if (!matchError) {
+          console.log('✅ Match created successfully!');
+          
+          // Remove both users from queue
+          await this.supabase
+            .from('matching_queue')
+            .delete()
+            .in('user_id', [this.currentUserId, match.user_id]);
 
-        console.log('🚀 Match created successfully!');
-        onMatchFound(roomId);
-        this.leaveQueue();
+          onMatchFound(roomId);
+          this.leaveQueue();
+        }
       } else {
         console.log('⏳ No matches found, still waiting...');
       }
