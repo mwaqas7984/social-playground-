@@ -5,11 +5,11 @@ export interface User {
   joinedAt: number;
 }
 
-export interface Room {
+export interface ChatMessage {
   id: string;
-  users: User[];
-  createdAt: number;
-  status: 'waiting' | 'active' | 'ended';
+  userId: string;
+  content: string;
+  timestamp: number;
 }
 
 export interface SignalingMessage {
@@ -29,21 +29,6 @@ export interface ActivityMessage {
   type: 'draw-event' | 'video-sync' | 'prompt-change' | 'chat-message';
   activityType: 'drawing' | 'watch-together' | 'prompts' | 'chat';
   payload: any;
-}
-
-export interface ChatMessage {
-  id: string;
-  userId: string;
-  content: string;
-  timestamp: number;
-}
-
-export interface GameEngine {
-  name: string;
-  initialize: (playerId: string) => any;
-  handleAction: (state: any, action: any, playerId: string) => any;
-  render: (state: any, playerId: string) => React.ReactNode;
-  isGameOver: (state: any) => boolean;
 }
 
 export interface ReportData {
