@@ -66,7 +66,15 @@ export default function RoomPage() {
         console.log('📡 Channel status:', status);
         if (status === 'SUBSCRIBED') {
           console.log('✅ Joined room successfully');
-          setConnectionStatus('waiting');
+          setConnectionStatus('matched');
+          setIsConnected(true);
+          setPartnerConnected(true);
+          
+          // Auto-start video call
+          setTimeout(() => {
+            console.log('🎥 Auto-starting video call...');
+            startCall();
+          }, 1000);
           
           // Announce that we joined
           channel.send({
@@ -85,23 +93,6 @@ export default function RoomPage() {
       }
     };
   }, [roomId, router]);
-
-  useEffect(() => {
-    // Check if partner is already connected
-    const checkPartner = async () => {
-      // Simple check - if we're in a room, assume partner might be there
-      setTimeout(() => {
-        if (connectionStatus === 'waiting') {
-          console.log('⏳ Checking for partner...');
-          setPartnerConnected(true);
-          setConnectionStatus('matched');
-          setIsConnected(true);
-        }
-      }, 2000);
-    };
-
-    checkPartner();
-  }, [connectionStatus]);
 
   const handleEndSession = () => {
     if (channelRef.current) {
