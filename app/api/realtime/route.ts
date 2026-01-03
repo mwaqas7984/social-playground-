@@ -58,7 +58,7 @@ function generateRoomId() {
   return `room-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-export async function GET(request: NextApiRequest) {
+export async function GET(request: NextRequest) {
   // Handle WebSocket upgrade for real-time signaling
   const url = new URL(request.url);
   const isWebSocket = request.headers.get('upgrade') === 'websocket';
