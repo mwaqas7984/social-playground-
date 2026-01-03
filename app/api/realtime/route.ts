@@ -128,6 +128,8 @@ function handleFindMatch(userData: MatchData) {
       createdAt: Date.now(),
       signaling: {
         user1Offer: null,
+        user1Answer: null,
+        user2Offer: null,
         user2Answer: null,
         user1Ice: [],
         user2Ice: []
