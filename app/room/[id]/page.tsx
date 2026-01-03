@@ -116,28 +116,24 @@ export default function RoomPage() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-white flex flex-col">
-      <StatusBar 
-        connectionStatus={connectionStatus}
-        isConnected={isConnected}
-        partnerConnected={partnerConnected}
-        onEndSession={handleEndSession}
-      />
+      <div className="flex items-center justify-between p-4 border-b border-slate-700">
+        <StatusBar 
+          status={connectionStatus}
+        />
+        <button
+          onClick={handleEndSession}
+          className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
+        >
+          End Session
+        </button>
+      </div>
       
       <div className="flex-1 flex">
         <div className="flex-1 flex flex-col lg:flex-row">
           {/* Chat Panel - Always Visible */}
           <div className="flex-1 lg:max-w-md border-r border-slate-700">
             <ChatPanel
-              isConnected={isConnected}
-              onSendMessage={(message) => {
-                if (channelRef.current) {
-                  channelRef.current.send({
-                    type: 'broadcast',
-                    event: 'chat-message',
-                    payload: { message, userId: localStorage.getItem('sessionId'), timestamp: Date.now() }
-                  });
-                }
-              }}
+              roomId={roomId}
             />
           </div>
 
@@ -147,9 +143,7 @@ export default function RoomPage() {
             <VideoPanel
               localStream={localStream}
               remoteStream={remoteStream}
-              isConnected={isConnected}
               onStartCall={startCall}
-              onEndCall={endCall}
               onToggleCamera={toggleCamera}
               onToggleMic={toggleMic}
             />
@@ -193,29 +187,11 @@ export default function RoomPage() {
               <div className="h-96">
                 {showGames ? (
                   <GamesPanel
-                    isConnected={isConnected}
-                    onGameAction={(action) => {
-                      if (channelRef.current) {
-                        channelRef.current.send({
-                          type: 'broadcast',
-                          event: 'game-action',
-                          payload: action
-                        });
-                      }
-                    }}
+                    roomId={roomId}
                   />
                 ) : showActivities ? (
                   <ActivitiesPanel
-                    isConnected={isConnected}
-                    onActivityEvent={(event) => {
-                      if (channelRef.current) {
-                        channelRef.current.send({
-                          type: 'broadcast',
-                          event: 'activity-event',
-                          payload: event
-                        });
-                      }
-                    }}
+                    roomId={roomId}
                   />
                 ) : (
                   <div className="h-full flex items-center justify-center text-slate-500">
