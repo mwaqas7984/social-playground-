@@ -129,9 +129,11 @@ export class MatchingService {
         .from('matching_queue')
         .select('*', { count: 'exact', head: true });
       
+      const queueCount = count || 0;
+      
       return {
-        totalInQueue: count || 0,
-        estimatedWaitTime: count === 0 ? 'Waiting for someone...' : count <= 2 ? '< 10 seconds' : '< 30 seconds'
+        totalInQueue: queueCount,
+        estimatedWaitTime: queueCount === 0 ? 'Waiting for someone...' : queueCount <= 2 ? '< 10 seconds' : '< 30 seconds'
       };
     } catch (error) {
       console.error('❌ Failed to get queue status:', error);
