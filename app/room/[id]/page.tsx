@@ -39,6 +39,7 @@ export default function RoomPage() {
     supabaseRef.current = createClient(supabaseUrl, supabaseAnonKey);
     
     console.log(`🏠 Connecting to room: ${roomId}`);
+    console.log(`👤 My session ID: ${sessionId}`);
     
     // Join the room channel
     const channel = supabaseRef.current.channel(`room:${roomId}`);
@@ -46,21 +47,50 @@ export default function RoomPage() {
     channel
       .on('broadcast', { event: 'partner-joined' }, (payload: any) => {
         console.log('🤝 Partner joined:', payload);
-        setPartnerConnected(true);
-        setConnectionStatus('matched');
-        setIsConnected(true);
+        if (payload.userId !== sessionId) {
+          setPartnerConnected(true);
+          setConnectionStatus('matched');
+          setIsConnected(true);
+          
+          // Send acknowledgment
+          channel.send({
+            type: 'broadcast',
+            event: 'partner-acknowledged',
+            payload: { userId: sessionId, timestamp: Date.now() }
+          });
+        }
+      })
+      .on('broadcast', { event: 'partner-acknowledged' }, (payload: any) => {
+        console.log('👋 Partner acknowledged:', payload);
+        if (payload.userId !== sessionId) {
+          setPartnerConnected(true);
+          setConnectionStatus('matched');
+          setIsConnected(true);
+        }
       })
       .on('broadcast', { event: 'chat-message' }, (payload: any) => {
         console.log('💬 Chat message received:', payload);
-        // Handle chat messages
+        // This will be handled by ChatPanel
       })
       .on('broadcast', { event: 'game-action' }, (payload: any) => {
-        console.log('🎮 Game action:', payload);
-        // Handle game actions
+        console.log('🎮 Game action received:', payload);
+        // This will be handled by GamesPanel
       })
       .on('broadcast', { event: 'activity-event' }, (payload: any) => {
-        console.log('🎨 Activity event:', payload);
-        // Handle activity events
+        console.log('🎨 Activity event received:', payload);
+        // This will be handled by ActivitiesPanel
+      })
+      .on('broadcast', { event: 'webrtc-offer' }, (payload: any) => {
+        console.log('📞 WebRTC offer received:', payload);
+        // Handle WebRTC signaling
+      })
+      .on('broadcast', { event: 'webrtc-answer' }, (payload: any) => {
+        console.log('📞 WebRTC answer received:', payload);
+        // Handle WebRTC signaling
+      })
+      .on('broadcast', { event: 'webrtc-ice-candidate' }, (payload: any) => {
+        console.log('🧊 WebRTC ICE candidate received:', payload);
+        // Handle WebRTC signaling
       })
       .subscribe((status: any) => {
         console.log('📡 Channel status:', status);
@@ -68,13 +98,6 @@ export default function RoomPage() {
           console.log('✅ Joined room successfully');
           setConnectionStatus('matched');
           setIsConnected(true);
-          setPartnerConnected(true);
-          
-          // Auto-start video call
-          setTimeout(() => {
-            console.log('🎥 Auto-starting video call...');
-            startCall();
-          }, 1000);
           
           // Announce that we joined
           channel.send({
@@ -82,6 +105,12 @@ export default function RoomPage() {
             event: 'partner-joined',
             payload: { userId: sessionId, timestamp: Date.now() }
           });
+          
+          // Auto-start video call after a short delay
+          setTimeout(() => {
+            console.log('🎥 Auto-starting video call...');
+            startCall();
+          }, 2000);
         }
       });
 
@@ -89,6 +118,12 @@ export default function RoomPage() {
 
     return () => {
       if (channelRef.current) {
+        console.log('👋 Leaving room');
+        channelRef.current.send({
+          type: 'broadcast',
+          event: 'partner-left',
+          payload: { userId: sessionId, timestamp: Date.now() }
+        });
         channelRef.current.unsubscribe();
       }
     };
