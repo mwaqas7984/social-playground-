@@ -8,6 +8,7 @@ export class MatchingService {
   private supabase = createClient(supabaseUrl, supabaseAnonKey);
   private currentUserId: string;
   private pollingInterval: any = null;
+  private realtimeChannel: any = null;
 
   constructor(userId: string) {
     this.currentUserId = userId;
@@ -16,8 +17,8 @@ export class MatchingService {
   async findMatch(user: User, onMatchFound: (roomId: string) => void) {
     console.log(`🎯 User ${user.id} looking for match in mode: ${user.mode}`);
     
-    // Add user to queue
     try {
+      // Add user to queue
       await this.supabase
         .from('matching_queue')
         .upsert({
@@ -30,18 +31,57 @@ export class MatchingService {
         });
       
       console.log('✅ Added to queue');
+      
+      // Set up real-time listener for matches
+      await this.setupRealtimeListener(onMatchFound);
+      
+      // Check for matches immediately
+      await this.checkForMatch(onMatchFound);
+      
+      // Start polling as backup
+      this.pollingInterval = setInterval(async () => {
+        await this.checkForMatch(onMatchFound);
+      }, 1000);
+      
     } catch (error) {
       console.error('❌ Failed to join queue:', error);
       return;
     }
+  }
 
-    // Start polling for matches
-    this.pollingInterval = setInterval(async () => {
-      await this.checkForMatch(onMatchFound);
-    }, 1000);
-
-    // Also check immediately
-    await this.checkForMatch(onMatchFound);
+  private async setupRealtimeListener(onMatchFound: (roomId: string) => void) {
+    // Listen for real-time changes in matches table
+    this.realtimeChannel = this.supabase
+      .channel('matches-channel')
+      .on('postgres_changes', 
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'matches',
+          filter: `user1_id=eq.${this.currentUserId}` 
+        },
+        (payload: any) => {
+          console.log('🎉 Real-time match found!', payload.new);
+          onMatchFound(payload.new.room_id);
+          this.leaveQueue();
+        }
+      )
+      .on('postgres_changes', 
+        { 
+          event: 'INSERT', 
+          schema: 'public', 
+          table: 'matches',
+          filter: `user2_id=eq.${this.currentUserId}` 
+        },
+        (payload: any) => {
+          console.log('🎉 Real-time match found!', payload.new);
+          onMatchFound(payload.new.room_id);
+          this.leaveQueue();
+        }
+      )
+      .subscribe((status: any) => {
+        console.log('📡 Realtime subscription status:', status);
+      });
   }
 
   private async checkForMatch(onMatchFound: (roomId: string) => void) {
@@ -65,73 +105,75 @@ export class MatchingService {
         return;
       }
 
-      // Look for someone to match with
-      const { data: potentialMatches, error: queueError } = await this.supabase
+      // Get current queue status
+      const { data: queueData, error: queueError } = await this.supabase
         .from('matching_queue')
         .select('*')
-        .neq('user_id', this.currentUserId)
-        .limit(1);
+        .order('joined_at', { ascending: true });
 
       if (queueError) {
         console.error('❌ Error checking queue:', queueError);
         return;
       }
 
-      console.log(`👥 Queue status: Found ${potentialMatches?.length || 0} potential matches`);
+      console.log(`👥 Queue status: ${queueData?.length || 0} users waiting`);
 
-      if (potentialMatches && potentialMatches.length > 0) {
-        const match = potentialMatches[0];
+      if (queueData && queueData.length >= 2) {
+        // Omegle-style: pair first two users in queue
+        const user1 = queueData[0];
+        const user2 = queueData[1];
         
-        console.log(`🤝 Found potential match with user: ${match.user_id}`);
+        // Skip if we're not one of the first two
+        if (user1.user_id !== this.currentUserId && user2.user_id !== this.currentUserId) {
+          console.log('⏳ Not our turn yet, waiting...');
+          return;
+        }
         
-        // Create a deterministic room ID based on both user IDs
-        const roomIds = [this.currentUserId, match.user_id].sort();
+        console.log(`🤝 Pairing users: ${user1.user_id} <-> ${user2.user_id}`);
+        
+        // Create deterministic room ID
+        const roomIds = [user1.user_id, user2.user_id].sort();
         const roomId = `room-${roomIds[0]}-${roomIds[1]}`;
         
-        console.log(`🏠 Creating deterministic room: ${roomId}`);
+        console.log(`🏠 Creating room: ${roomId}`);
         
-        // Try to create the match (only one will succeed due to race condition)
+        // Create the match
         const { data: createdMatch, error: matchError } = await this.supabase
           .from('matches')
-          .upsert({
+          .insert({
             room_id: roomId,
-            user1_id: this.currentUserId,
-            user2_id: match.user_id,
+            user1_id: user1.user_id,
+            user2_id: user2.user_id,
             created_at: new Date().toISOString()
-          }, {
-            onConflict: 'user1_id,user2_id'
           })
           .select();
 
         if (matchError) {
-          console.log('⚠️ Match creation failed (race condition), checking existing...', matchError);
+          console.error('❌ Failed to create match:', matchError);
           
-          // Check if the other user already created the match
-          const { data: existingMatchAfterRace } = await this.supabase
+          // Check if match was created by other user (race condition)
+          const { data: raceMatch } = await this.supabase
             .from('matches')
             .select('*')
             .or(`user1_id.eq.${this.currentUserId},user2_id.eq.${this.currentUserId}`)
             .single();
 
-          if (existingMatchAfterRace) {
-            console.log('🎉 Found match after race condition:', existingMatchAfterRace.room_id);
-            onMatchFound(existingMatchAfterRace.room_id);
+          if (raceMatch) {
+            console.log('🎉 Found match after race condition:', raceMatch.room_id);
+            onMatchFound(raceMatch.room_id);
             this.leaveQueue();
-            return;
-          } else {
-            console.log('❌ No match found after race condition');
-            return;
           }
+          return;
         }
 
         if (createdMatch) {
-          console.log('✅ Match created successfully!', createdMatch);
+          console.log('✅ Match created successfully!', createdMatch[0]);
           
           // Remove both users from queue
           const { error: deleteError } = await this.supabase
             .from('matching_queue')
             .delete()
-            .in('user_id', [this.currentUserId, match.user_id]);
+            .in('user_id', [user1.user_id, user2.user_id]);
 
           if (deleteError) {
             console.error('❌ Error removing from queue:', deleteError);
@@ -144,7 +186,7 @@ export class MatchingService {
           this.leaveQueue();
         }
       } else {
-        console.log('⏳ No matches found, still waiting...');
+        console.log('⏳ Not enough users in queue, waiting...');
       }
     } catch (error) {
       console.error('❌ Error checking for match:', error);
@@ -154,11 +196,19 @@ export class MatchingService {
   async leaveQueue() {
     console.log('👋 Leaving queue');
     
+    // Clear polling
     if (this.pollingInterval) {
       clearInterval(this.pollingInterval);
       this.pollingInterval = null;
     }
 
+    // Unsubscribe from realtime
+    if (this.realtimeChannel) {
+      await this.supabase.removeChannel(this.realtimeChannel);
+      this.realtimeChannel = null;
+    }
+
+    // Remove from queue
     try {
       await this.supabase
         .from('matching_queue')
