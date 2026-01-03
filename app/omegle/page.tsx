@@ -32,7 +32,7 @@ export default function OmeglePage() {
   const [newMessage, setNewMessage] = useState('');
   const [showGames, setShowGames] = useState(false);
   const [showActivities, setShowActivities] = useState(false);
-  const messagesEndRef = useRef(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const VIBE_TAGS = ["chill", "deep talk", "gaming", "music", "study buddy", "tech", "random"];
 
