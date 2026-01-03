@@ -9,9 +9,10 @@ const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYm
 
 interface ChatPanelProps {
   roomId: string;
+  onSendMessage?: (message: string) => void; // Optional callback for room page to handle sending
 }
 
-export function ChatPanel({ roomId }: ChatPanelProps) {
+export function ChatPanel({ roomId, onSendMessage }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [isConnected, setIsConnected] = useState(false);
@@ -23,6 +24,7 @@ export function ChatPanel({ roomId }: ChatPanelProps) {
     
     console.log(`💬 ChatPanel joining room: ${roomId}`);
     
+    // Join the same room channel as the room page
     const channel = supabase.channel(`room:${roomId}`);
     
     channel
@@ -67,11 +69,17 @@ export function ChatPanel({ roomId }: ChatPanelProps) {
       
       console.log('💬 Sending message:', message);
       
+      // Send through the room channel
       channelRef.current.send({
         type: 'broadcast',
         event: 'chat-message',
         payload: message
       });
+      
+      // Also call the optional callback if provided
+      if (onSendMessage) {
+        onSendMessage(newMessage.trim());
+      }
       
       setNewMessage('');
     }
