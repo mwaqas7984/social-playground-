@@ -1,9 +1,28 @@
 // Real-time WebRTC signaling using Vercel Edge Functions with WebSocket
 import { NextResponse } from 'next/server';
 
+// Type definitions
+interface WaitingUser {
+  userId: string;
+  userData: any;
+  joinedAt: number;
+}
+
+interface ActiveRoom {
+  user1: string;
+  user2: string;
+  createdAt: number;
+  signaling: {
+    user1Offer: any;
+    user2Answer: any;
+    user1Ice: any[];
+    user2Ice: any[];
+  };
+}
+
 // In-memory store for active connections (in production, use Redis or database)
-const activeRooms = new Map();
-const waitingQueue = [];
+const activeRooms = new Map<string, ActiveRoom>();
+const waitingQueue: WaitingUser[] = [];
 const connectedUsers = new Map();
 
 function generateRoomId() {

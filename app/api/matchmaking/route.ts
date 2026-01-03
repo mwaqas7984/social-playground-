@@ -1,17 +1,29 @@
 // Serverless WebRTC signaling using Vercel Edge Functions
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+
+// Type definitions
+interface WaitingUser {
+  userId: string;
+  userData: any;
+  joinedAt: number;
+}
+
+interface ActiveRoom {
+  users: string[];
+  createdAt: number;
+}
 
 // In-memory store for active connections (in production, use Redis or database)
-const activeRooms = new Map();
-const waitingQueue = [];
+const activeRooms = new Map<string, ActiveRoom>();
+const waitingQueue: WaitingUser[] = [];
 
 function generateRoomId() {
   return `room-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-export async function POST(request) {
+export async function POST(request: NextRequest) {
   try {
-    const { type, data } = await request.json();
+    const { type, data }: { type: string; data: any } = await request.json();
     
     switch (type) {
       case 'find-match':
@@ -31,7 +43,7 @@ export async function POST(request) {
   }
 }
 
-function handleFindMatch(userData) {
+function handleFindMatch(userData: any) {
   // Add to waiting queue
   waitingQueue.push({
     userId: userData.userId,
@@ -43,6 +55,10 @@ function handleFindMatch(userData) {
   if (waitingQueue.length >= 2) {
     const user1 = waitingQueue.shift();
     const user2 = waitingQueue.shift();
+    
+    if (!user1 || !user2) {
+      return NextResponse.json({ type: 'waiting' });
+    }
     
     const roomId = generateRoomId();
     
@@ -66,18 +82,18 @@ function handleFindMatch(userData) {
   return NextResponse.json({ type: 'waiting' });
 }
 
-function handleSignal(data) {
+function handleSignal(data: any) {
   // In a real implementation, you'd relay this to the other user
   // For now, just acknowledge
   return NextResponse.json({ type: 'signal-relayed' });
 }
 
-function handleChatMessage(data) {
+function handleChatMessage(data: any) {
   // In a real implementation, you'd relay this to the other user
   return NextResponse.json({ type: 'message-relayed' });
 }
 
-function handleNextMatch(data) {
+function handleNextMatch(data: any) {
   // Remove user from current room
   // Add back to queue
   return handleFindMatch(data);
