@@ -227,17 +227,10 @@ export default function RoomPage() {
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => setShowActivities(false)}
-                className="text-slate-400 hover:text-white"
-              >
-                ✕
-              </button>
             </div>
-            <ActivitiesPanel roomId={roomId} />
           </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }
