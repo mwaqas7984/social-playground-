@@ -46,26 +46,38 @@ export class MatchingService {
 
   private async checkForMatch(onMatchFound: (roomId: string) => void) {
     try {
+      console.log(`🔍 Checking for match for user: ${this.currentUserId}`);
+      
       // First check if we're already matched
-      const { data: existingMatch } = await this.supabase
+      const { data: existingMatch, error: matchCheckError } = await this.supabase
         .from('matches')
         .select('*')
-        .or(`user1_id.eq.${this.currentUserId},user2_id.eq.${this.currentUserId}`)
-        .single();
+        .or(`user1_id.eq.${this.currentUserId},user2_id.eq.${this.currentUserId}`);
 
-      if (existingMatch) {
-        console.log('🎉 Found existing match:', existingMatch.room_id);
-        onMatchFound(existingMatch.room_id);
+      if (matchCheckError) {
+        console.error('❌ Error checking existing match:', matchCheckError);
+      }
+
+      if (existingMatch && existingMatch.length > 0) {
+        console.log('🎉 Found existing match:', existingMatch[0].room_id);
+        onMatchFound(existingMatch[0].room_id);
         this.leaveQueue();
         return;
       }
 
       // Look for someone to match with
-      const { data: potentialMatches } = await this.supabase
+      const { data: potentialMatches, error: queueError } = await this.supabase
         .from('matching_queue')
         .select('*')
         .neq('user_id', this.currentUserId)
         .limit(1);
+
+      if (queueError) {
+        console.error('❌ Error checking queue:', queueError);
+        return;
+      }
+
+      console.log(`👥 Queue status: Found ${potentialMatches?.length || 0} potential matches`);
 
       if (potentialMatches && potentialMatches.length > 0) {
         const match = potentialMatches[0];
@@ -79,7 +91,7 @@ export class MatchingService {
         console.log(`🏠 Creating deterministic room: ${roomId}`);
         
         // Try to create the match (only one will succeed due to race condition)
-        const { error: matchError } = await this.supabase
+        const { data: createdMatch, error: matchError } = await this.supabase
           .from('matches')
           .upsert({
             room_id: roomId,
@@ -88,10 +100,11 @@ export class MatchingService {
             created_at: new Date().toISOString()
           }, {
             onConflict: 'user1_id,user2_id'
-          });
+          })
+          .select();
 
         if (matchError) {
-          console.log('⚠️ Match creation failed (race condition), checking existing...');
+          console.log('⚠️ Match creation failed (race condition), checking existing...', matchError);
           
           // Check if the other user already created the match
           const { data: existingMatchAfterRace } = await this.supabase
@@ -105,18 +118,28 @@ export class MatchingService {
             onMatchFound(existingMatchAfterRace.room_id);
             this.leaveQueue();
             return;
+          } else {
+            console.log('❌ No match found after race condition');
+            return;
           }
         }
 
-        if (!matchError) {
-          console.log('✅ Match created successfully!');
+        if (createdMatch) {
+          console.log('✅ Match created successfully!', createdMatch);
           
           // Remove both users from queue
-          await this.supabase
+          const { error: deleteError } = await this.supabase
             .from('matching_queue')
             .delete()
             .in('user_id', [this.currentUserId, match.user_id]);
 
+          if (deleteError) {
+            console.error('❌ Error removing from queue:', deleteError);
+          } else {
+            console.log('🗑️ Removed both users from queue');
+          }
+
+          console.log('🚀 Redirecting to room:', roomId);
           onMatchFound(roomId);
           this.leaveQueue();
         }
