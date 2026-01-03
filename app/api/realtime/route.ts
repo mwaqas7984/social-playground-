@@ -1,5 +1,5 @@
 // Real-time WebRTC signaling using Vercel Edge Functions with WebSocket
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
 // Type definitions
 interface WaitingUser {
@@ -20,16 +20,45 @@ interface ActiveRoom {
   };
 }
 
+interface MatchData {
+  userId: string;
+  mode?: string;
+  vibeTags?: string[];
+}
+
+interface SignalData {
+  roomId: string;
+  userId: string;
+  signalType: string;
+  signalData: any;
+}
+
+interface ChatData {
+  roomId: string;
+  userId: string;
+  message: string;
+}
+
+interface NextMatchData {
+  roomId: string;
+  userId: string;
+}
+
+interface LeaveRoomData {
+  roomId: string;
+  userId: string;
+}
+
 // In-memory store for active connections (in production, use Redis or database)
 const activeRooms = new Map<string, ActiveRoom>();
 const waitingQueue: WaitingUser[] = [];
-const connectedUsers = new Map();
+const connectedUsers = new Map<string, any>();
 
 function generateRoomId() {
   return `room-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-export async function GET(request) {
+export async function GET(request: NextApiRequest) {
   // Handle WebSocket upgrade for real-time signaling
   const url = new URL(request.url);
   const isWebSocket = request.headers.get('upgrade') === 'websocket';
@@ -45,21 +74,21 @@ export async function GET(request) {
   });
 }
 
-export async function POST(request) {
+export async function POST(request: NextRequest) {
   try {
-    const { type, data } = await request.json();
+    const { type, data }: { type: string; data: any } = await request.json();
     
     switch (type) {
       case 'find-match':
-        return handleFindMatch(data);
+        return handleFindMatch(data as MatchData);
       case 'signal':
-        return handleSignal(data);
+        return handleSignal(data as SignalData);
       case 'chat-message':
-        return handleChatMessage(data);
+        return handleChatMessage(data as ChatData);
       case 'next-match':
-        return handleNextMatch(data);
+        return handleNextMatch(data as NextMatchData);
       case 'leave-room':
-        return handleLeaveRoom(data);
+        return handleLeaveRoom(data as LeaveRoomData);
       default:
         return NextResponse.json({ error: 'Unknown type' }, { status: 400 });
     }
@@ -69,8 +98,8 @@ export async function POST(request) {
   }
 }
 
-function handleFindMatch(userData) {
-  console.log('🔍 User looking for match:', userData.userId);
+function handleFindMatch(userData: MatchData) {
+  console.log(' User looking for match:', userData.userId);
   
   // Add to waiting queue
   waitingQueue.push({
@@ -83,6 +112,10 @@ function handleFindMatch(userData) {
   if (waitingQueue.length >= 2) {
     const user1 = waitingQueue.shift();
     const user2 = waitingQueue.shift();
+    
+    if (!user1 || !user2) {
+      return NextResponse.json({ type: 'waiting', data: { queuePosition: waitingQueue.length } });
+    }
     
     const roomId = generateRoomId();
     
@@ -99,7 +132,7 @@ function handleFindMatch(userData) {
       }
     });
     
-    console.log('🤝 Match found:', { roomId, user1: user1.userId, user2: user2.userId });
+    console.log(' Match found:', { roomId, user1: user1.userId, user2: user2.userId });
     
     return NextResponse.json({
       type: 'matched',
@@ -114,7 +147,7 @@ function handleFindMatch(userData) {
   return NextResponse.json({ type: 'waiting', data: { queuePosition: waitingQueue.length } });
 }
 
-function handleSignal(data) {
+function handleSignal(data: SignalData) {
   const { roomId, userId, signalType, signalData } = data;
   
   if (!activeRooms.has(roomId)) {
@@ -122,6 +155,9 @@ function handleSignal(data) {
   }
   
   const room = activeRooms.get(roomId);
+  if (!room) {
+    return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+  }
   
   // Store signaling data
   switch (signalType) {
@@ -150,7 +186,7 @@ function handleSignal(data) {
   
   // Return the partner's signaling data if available
   const partnerId = room.user1 === userId ? room.user2 : room.user1;
-  let partnerData = null;
+  let partnerData: any = null;
   
   if (signalType === 'offer' && room.user2 === userId) {
     partnerData = room.signaling.user1Offer;
@@ -170,7 +206,7 @@ function handleSignal(data) {
   });
 }
 
-function handleChatMessage(data) {
+function handleChatMessage(data: ChatData) {
   const { roomId, userId, message } = data;
   
   if (!activeRooms.has(roomId)) {
@@ -178,6 +214,10 @@ function handleChatMessage(data) {
   }
   
   const room = activeRooms.get(roomId);
+  if (!room) {
+    return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+  }
+  
   const partnerId = room.user1 === userId ? room.user2 : room.user1;
   
   // In a real implementation, you'd use WebSocket to send this to the partner
@@ -188,16 +228,20 @@ function handleChatMessage(data) {
   });
 }
 
-function handleNextMatch(data) {
+function handleNextMatch(data: NextMatchData) {
   const { roomId, userId } = data;
   
   // Remove user from current room
   if (activeRooms.has(roomId)) {
     const room = activeRooms.get(roomId);
+    if (!room) {
+      return handleFindMatch({ userId: data.userId });
+    }
+    
     const partnerId = room.user1 === userId ? room.user2 : room.user1;
     
     // Notify partner (in real implementation)
-    console.log('👋 User left room:', userId);
+    console.log(' User left room:', userId);
     
     // Clean up room if empty
     if (partnerId) {
@@ -213,17 +257,21 @@ function handleNextMatch(data) {
   }
   
   // Add user back to queue
-  return handleFindMatch(data);
+  return handleFindMatch({ userId: data.userId });
 }
 
-function handleLeaveRoom(data) {
+function handleLeaveRoom(data: LeaveRoomData) {
   const { roomId, userId } = data;
   
   if (activeRooms.has(roomId)) {
     const room = activeRooms.get(roomId);
+    if (!room) {
+      return NextResponse.json({ type: 'room-left' });
+    }
+    
     const partnerId = room.user1 === userId ? room.user2 : room.user1;
     
-    console.log('👋 User left room:', userId);
+    console.log(' User left room:', userId);
     
     // Add partner back to queue
     if (partnerId) {
