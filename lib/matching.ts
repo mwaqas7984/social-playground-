@@ -1,184 +1,144 @@
-import { User, Room } from './types';
+import { User } from './types';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://lbjymipntzjczegvunyn.supabase.co';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxianltaXBudHpqY3plZ3Z1bnluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNzU2NzUsImV4cCI6MjA4Mjk1MTY3NX0.ebRmcLR2RCV9H5Nrmh2IlURbZ8u32zvNUnmQ0adL73c';
+const supabaseUrl = 'https://lbjymipntzjczegvunyn.supabase.co';
+const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxianltaXBudHpqY3plZ3Z1bnluIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjczNzU2NzUsImV4cCI6MjA4Mjk1MTY3NX0.ebRmcLR2RCV9H5Nrmh2IlURbZ8u32zvNUnmQ0adL73c';
 
 export class MatchingService {
   private supabase = createClient(supabaseUrl, supabaseAnonKey);
   private currentUserId: string;
-  private subscription: any = null;
+  private pollingInterval: any = null;
 
   constructor(userId: string) {
     this.currentUserId = userId;
   }
 
   async findMatch(user: User, onMatchFound: (roomId: string) => void) {
+    console.log(`🎯 User ${user.id} looking for match in mode: ${user.mode}`);
+    
     // Add user to queue
-    await this.supabase
-      .from('matching_queue')
-      .insert({
-        user_id: user.id,
-        vibe_tags: user.vibeTags,
-        mode: user.mode,
-        joined_at: Date.now()
-      });
-
-    // Listen for matches
-    this.subscription = this.supabase
-      .channel('matching')
-      .on('postgres_changes', 
-        { event: 'INSERT', schema: 'public', table: 'matches' },
-        (payload: any) => {
-          const match = payload.new;
-          if (match.user1_id === this.currentUserId || match.user2_id === this.currentUserId) {
-            onMatchFound(match.room_id);
-            this.leaveQueue();
-          }
-        }
-      )
-      .subscribe();
-
-    // Try to find existing match with smart logic
-    await this.smartMatch(user, onMatchFound);
-  }
-
-  private async smartMatch(user: User, onMatchFound: (roomId: string) => void) {
-    // First, get total queue size
-    const { count: totalQueueSize } = await this.supabase
-      .from('matching_queue')
-      .select('*', { count: 'exact', head: true })
-      .neq('user_id', this.currentUserId);
-
-    const queueSize = totalQueueSize || 0;
-    console.log(`Queue size: ${queueSize}, User mode: ${user.mode}`);
-
-    let potentialMatches;
-
-    if (queueSize === 0) {
-      // No one in queue - wait for someone
-      console.log('No one in queue, waiting...');
+    try {
+      await this.supabase
+        .from('matching_queue')
+        .upsert({
+          user_id: user.id,
+          vibe_tags: user.vibeTags,
+          mode: user.mode,
+          joined_at: Date.now()
+        }, {
+          onConflict: 'user_id'
+        });
+      
+      console.log('✅ Added to queue');
+    } catch (error) {
+      console.error('❌ Failed to join queue:', error);
       return;
-    } else if (queueSize <= 2) {
-      // Low traffic (1-2 people) - match with anyone immediately
-      console.log('Low traffic - matching with anyone');
-      const { data: matches } = await this.supabase
-        .from('matching_queue')
-        .select('*')
-        .neq('user_id', this.currentUserId)
-        .limit(1);
-      
-      potentialMatches = matches;
-    } else if (queueSize <= 6) {
-      // Medium traffic (3-6 people) - try mode match first, then fallback
-      console.log('Medium traffic - trying mode match first');
-      
-      // Try to match by mode first
-      const { data: modeMatches } = await this.supabase
-        .from('matching_queue')
-        .select('*')
-        .neq('user_id', this.currentUserId)
-        .eq('mode', user.mode)
-        .limit(1);
-
-      if (modeMatches && modeMatches.length > 0) {
-        potentialMatches = modeMatches;
-      } else {
-        // Fallback to anyone
-        console.log('No mode match found, matching with anyone');
-        const { data: fallbackMatches } = await this.supabase
-          .from('matching_queue')
-          .select('*')
-          .neq('user_id', this.currentUserId)
-          .limit(1);
-        
-        potentialMatches = fallbackMatches;
-      }
-    } else {
-      // High traffic (7+ people) - strict mode matching with vibe tags
-      console.log('High traffic - strict mode and vibe matching');
-      
-      // Try exact mode + vibe tag match
-      const { data: vibeMatches } = await this.supabase
-        .from('matching_queue')
-        .select('*')
-        .neq('user_id', this.currentUserId)
-        .eq('mode', user.mode)
-        .contains('vibe_tags', [user.vibeTags[0] || 'random']) // Match at least one vibe tag
-        .limit(1);
-
-      if (vibeMatches && vibeMatches.length > 0) {
-        potentialMatches = vibeMatches;
-      } else {
-        // Fallback to mode match only
-        console.log('No vibe match, trying mode only');
-        const { data: modeMatches } = await this.supabase
-          .from('matching_queue')
-          .select('*')
-          .neq('user_id', this.currentUserId)
-          .eq('mode', user.mode)
-          .limit(1);
-        
-        potentialMatches = modeMatches;
-      }
     }
 
-    if (potentialMatches && potentialMatches.length > 0) {
-      const match = potentialMatches[0];
-      const roomId = crypto.randomUUID();
-      
-      console.log(`Matched with user ${match.user_id} in room ${roomId}`);
-      
-      // Create match record
-      await this.supabase
+    // Start polling for matches
+    this.pollingInterval = setInterval(async () => {
+      await this.checkForMatch(onMatchFound);
+    }, 1000);
+
+    // Also check immediately
+    await this.checkForMatch(onMatchFound);
+  }
+
+  private async checkForMatch(onMatchFound: (roomId: string) => void) {
+    try {
+      // Check if we're already matched
+      const { data: existingMatch } = await this.supabase
         .from('matches')
-        .insert({
-          room_id: roomId,
-          user1_id: this.currentUserId,
-          user2_id: match.user_id,
-          created_at: new Date().toISOString()
-        });
+        .select('*')
+        .or(`user1_id.eq.${this.currentUserId},user2_id.eq.${this.currentUserId}`)
+        .single();
 
-      // Remove both users from queue
-      await this.supabase
+      if (existingMatch) {
+        console.log('🎉 Found existing match:', existingMatch.room_id);
+        onMatchFound(existingMatch.room_id);
+        this.leaveQueue();
+        return;
+      }
+
+      // Look for someone to match with
+      const { data: potentialMatches } = await this.supabase
         .from('matching_queue')
-        .delete()
-        .in('user_id', [this.currentUserId, match.user_id]);
+        .select('*')
+        .neq('user_id', this.currentUserId)
+        .limit(1);
 
-      onMatchFound(roomId);
-    } else {
-      console.log('No matches found, continuing to wait...');
+      if (potentialMatches && potentialMatches.length > 0) {
+        const match = potentialMatches[0];
+        const roomId = crypto.randomUUID();
+        
+        console.log(`🤝 Found match! Creating room: ${roomId}`);
+        
+        // Create the match
+        const { error: matchError } = await this.supabase
+          .from('matches')
+          .insert({
+            room_id: roomId,
+            user1_id: this.currentUserId,
+            user2_id: match.user_id,
+            created_at: new Date().toISOString()
+          });
+
+        if (matchError) {
+          console.error('❌ Failed to create match:', matchError);
+          return;
+        }
+
+        // Remove both users from queue
+        await this.supabase
+          .from('matching_queue')
+          .delete()
+          .in('user_id', [this.currentUserId, match.user_id]);
+
+        console.log('🚀 Match created successfully!');
+        onMatchFound(roomId);
+        this.leaveQueue();
+      } else {
+        console.log('⏳ No matches found, still waiting...');
+      }
+    } catch (error) {
+      console.error('❌ Error checking for match:', error);
     }
   }
 
   async leaveQueue() {
-    if (this.subscription) {
-      await this.subscription.unsubscribe();
-      this.subscription = null;
+    console.log('👋 Leaving queue');
+    
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
     }
 
-    await this.supabase
-      .from('matching_queue')
-      .delete()
-      .eq('user_id', this.currentUserId);
+    try {
+      await this.supabase
+        .from('matching_queue')
+        .delete()
+        .eq('user_id', this.currentUserId);
+    } catch (error) {
+      console.error('❌ Failed to leave queue:', error);
+    }
   }
 
-  // Get queue status for UI
   async getQueueStatus() {
-    const { count } = await this.supabase
-      .from('matching_queue')
-      .select('*', { count: 'exact', head: true });
-    
-    return {
-      totalInQueue: count || 0,
-      estimatedWaitTime: this.calculateWaitTime(count || 0)
-    };
-  }
-
-  private calculateWaitTime(queueSize: number): string {
-    if (queueSize === 0) return 'Waiting for someone to join...';
-    if (queueSize <= 2) return '< 10 seconds';
-    if (queueSize <= 6) return '< 30 seconds';
-    return '< 1 minute';
+    try {
+      const { count } = await this.supabase
+        .from('matching_queue')
+        .select('*', { count: 'exact', head: true });
+      
+      return {
+        totalInQueue: count || 0,
+        estimatedWaitTime: count === 0 ? 'Waiting for someone...' : count <= 2 ? '< 10 seconds' : '< 30 seconds'
+      };
+    } catch (error) {
+      console.error('❌ Failed to get queue status:', error);
+      return {
+        totalInQueue: 0,
+        estimatedWaitTime: 'Unknown'
+      };
+    }
   }
 }
