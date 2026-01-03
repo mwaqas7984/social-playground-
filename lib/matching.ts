@@ -39,22 +39,95 @@ export class MatchingService {
       )
       .subscribe();
 
-    // Try to find existing match
-    await this.checkForExistingMatch(onMatchFound);
+    // Try to find existing match with smart logic
+    await this.smartMatch(user, onMatchFound);
   }
 
-  private async checkForExistingMatch(onMatchFound: (roomId: string) => void) {
-    // Look for another user in queue with similar preferences
-    const { data: potentialMatches } = await this.supabase
+  private async smartMatch(user: User, onMatchFound: (roomId: string) => void) {
+    // First, get total queue size
+    const { count: totalQueueSize } = await this.supabase
       .from('matching_queue')
-      .select('*')
-      .neq('user_id', this.currentUserId)
-      .eq('mode', 'chat') // For now, just match by mode
-      .limit(1);
+      .select('*', { count: 'exact', head: true })
+      .neq('user_id', this.currentUserId);
+
+    const queueSize = totalQueueSize || 0;
+    console.log(`Queue size: ${queueSize}, User mode: ${user.mode}`);
+
+    let potentialMatches;
+
+    if (queueSize === 0) {
+      // No one in queue - wait for someone
+      console.log('No one in queue, waiting...');
+      return;
+    } else if (queueSize <= 2) {
+      // Low traffic (1-2 people) - match with anyone immediately
+      console.log('Low traffic - matching with anyone');
+      const { data: matches } = await this.supabase
+        .from('matching_queue')
+        .select('*')
+        .neq('user_id', this.currentUserId)
+        .limit(1);
+      
+      potentialMatches = matches;
+    } else if (queueSize <= 6) {
+      // Medium traffic (3-6 people) - try mode match first, then fallback
+      console.log('Medium traffic - trying mode match first');
+      
+      // Try to match by mode first
+      const { data: modeMatches } = await this.supabase
+        .from('matching_queue')
+        .select('*')
+        .neq('user_id', this.currentUserId)
+        .eq('mode', user.mode)
+        .limit(1);
+
+      if (modeMatches && modeMatches.length > 0) {
+        potentialMatches = modeMatches;
+      } else {
+        // Fallback to anyone
+        console.log('No mode match found, matching with anyone');
+        const { data: fallbackMatches } = await this.supabase
+          .from('matching_queue')
+          .select('*')
+          .neq('user_id', this.currentUserId)
+          .limit(1);
+        
+        potentialMatches = fallbackMatches;
+      }
+    } else {
+      // High traffic (7+ people) - strict mode matching with vibe tags
+      console.log('High traffic - strict mode and vibe matching');
+      
+      // Try exact mode + vibe tag match
+      const { data: vibeMatches } = await this.supabase
+        .from('matching_queue')
+        .select('*')
+        .neq('user_id', this.currentUserId)
+        .eq('mode', user.mode)
+        .contains('vibe_tags', [user.vibeTags[0] || 'random']) // Match at least one vibe tag
+        .limit(1);
+
+      if (vibeMatches && vibeMatches.length > 0) {
+        potentialMatches = vibeMatches;
+      } else {
+        // Fallback to mode match only
+        console.log('No vibe match, trying mode only');
+        const { data: modeMatches } = await this.supabase
+          .from('matching_queue')
+          .select('*')
+          .neq('user_id', this.currentUserId)
+          .eq('mode', user.mode)
+          .limit(1);
+        
+        potentialMatches = modeMatches;
+      }
+    }
 
     if (potentialMatches && potentialMatches.length > 0) {
       const match = potentialMatches[0];
       const roomId = crypto.randomUUID();
+      
+      console.log(`Matched with user ${match.user_id} in room ${roomId}`);
       
       // Create match record
       await this.supabase
@@ -73,6 +146,8 @@ export class MatchingService {
         .in('user_id', [this.currentUserId, match.user_id]);
 
       onMatchFound(roomId);
+    } else {
+      console.log('No matches found, continuing to wait...');
     }
   }
 
@@ -86,5 +161,24 @@ export class MatchingService {
       .from('matching_queue')
       .delete()
       .eq('user_id', this.currentUserId);
+  }
+
+  // Get queue status for UI
+  async getQueueStatus() {
+    const { count } = await this.supabase
+      .from('matching_queue')
+      .select('*', { count: 'exact', head: true });
+    
+    return {
+      totalInQueue: count || 0,
+      estimatedWaitTime: this.calculateWaitTime(count || 0)
+    };
+  }
+
+  private calculateWaitTime(queueSize: number): string {
+    if (queueSize === 0) return 'Waiting for someone to join...';
+    if (queueSize <= 2) return '< 10 seconds';
+    if (queueSize <= 6) return '< 30 seconds';
+    return '< 1 minute';
   }
 }

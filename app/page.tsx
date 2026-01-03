@@ -10,6 +10,7 @@ export default function Home() {
   const [selectedMode, setSelectedMode] = useState("chat");
   const [isSearching, setIsSearching] = useState(false);
   const [sessionId, setSessionId] = useState<string>("");
+  const [queueStatus, setQueueStatus] = useState<{ totalInQueue: number; estimatedWaitTime: string } | null>(null);
   const router = useRouter();
 
   useEffect(() => {
@@ -22,6 +23,22 @@ export default function Home() {
       localStorage.setItem("sessionId", newId);
     }
   }, []);
+
+  useEffect(() => {
+    // Update queue status every 5 seconds
+    const updateQueueStatus = async () => {
+      if (sessionId) {
+        const matchingService = new MatchingService(sessionId);
+        const status = await matchingService.getQueueStatus();
+        setQueueStatus(status);
+      }
+    };
+
+    updateQueueStatus();
+    const interval = setInterval(updateQueueStatus, 5000);
+
+    return () => clearInterval(interval);
+  }, [sessionId]);
 
   const VIBE_TAGS = ["chill", "deep talk", "gaming", "music", "study buddy", "tech", "random"];
   
@@ -64,6 +81,18 @@ export default function Home() {
         <div className="text-center">
           <h1 className="text-4xl font-bold text-white mb-2">Social Playground</h1>
           <p className="text-slate-300">Anonymous chat with games & activities</p>
+          
+          {/* Queue Status */}
+          {queueStatus && (
+            <div className="mt-4 p-2 bg-slate-700/50 rounded-lg">
+              <p className="text-sm text-slate-300">
+                {queueStatus.totalInQueue} people waiting
+              </p>
+              <p className="text-xs text-slate-400">
+                {queueStatus.estimatedWaitTime}
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="space-y-6">
