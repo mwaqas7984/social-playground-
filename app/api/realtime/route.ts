@@ -14,6 +14,8 @@ interface ActiveRoom {
   createdAt: number;
   signaling: {
     user1Offer: any;
+    user1Answer: any;
+    user2Offer: any;
     user2Answer: any;
     user1Ice: any[];
     user2Ice: any[];
