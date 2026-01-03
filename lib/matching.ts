@@ -18,34 +18,107 @@ export class MatchingService {
     console.log(`🎯 User ${user.id} looking for match in mode: ${user.mode}`);
     
     try {
-      // Add user to queue
+      // Check if there's already someone waiting
+      const { data: waitingUsers, error: waitingError } = await this.supabase
+        .from('matching_queue')
+        .select('*')
+        .order('joined_at', { ascending: true })
+        .limit(1);
+
+      if (waitingError) {
+        console.error('❌ Error checking waiting users:', waitingError);
+        return;
+      }
+
+      if (waitingUsers && waitingUsers.length > 0) {
+        // Someone is already waiting - join their room
+        const waitingUser = waitingUsers[0];
+        console.log(`🤝 Found waiting user: ${waitingUser.user_id}`);
+        
+        // Check if they already have a room ID
+        if (waitingUser.room_id) {
+          console.log(`🏠 Joining existing room: ${waitingUser.room_id}`);
+          
+          // Create match
+          const { error: matchError } = await this.supabase
+            .from('matches')
+            .insert({
+              room_id: waitingUser.room_id,
+              user1_id: waitingUser.user_id,
+              user2_id: user.id,
+              created_at: new Date().toISOString()
+            });
+
+          if (matchError) {
+            console.error('❌ Failed to create match:', matchError);
+            return;
+          }
+
+          // Remove both from queue
+          await this.supabase
+            .from('matching_queue')
+            .delete()
+            .in('user_id', [waitingUser.user_id, user.id]);
+
+          console.log('🚀 Joining existing room!');
+          onMatchFound(waitingUser.room_id);
+          return;
+        }
+      }
+
+      // No one waiting - create a new room and wait
+      const roomId = `room-${user.id}-${Date.now()}`;
+      console.log(`🏠 Creating new room and waiting: ${roomId}`);
+      
+      // Add user to queue with room ID
       await this.supabase
         .from('matching_queue')
         .upsert({
           user_id: user.id,
           vibe_tags: user.vibeTags,
           mode: user.mode,
-          joined_at: Date.now()
+          joined_at: Date.now(),
+          room_id: roomId
         }, {
           onConflict: 'user_id'
         });
       
-      console.log('✅ Added to queue');
+      console.log('✅ Added to queue with room ID, waiting for partner...');
       
-      // Set up real-time listener for matches
+      // Set up real-time listener for when someone joins our room
       await this.setupRealtimeListener(onMatchFound);
       
-      // Check for matches immediately
-      await this.checkForMatch(onMatchFound);
-      
-      // Start polling as backup
+      // Start polling to check if someone joined
       this.pollingInterval = setInterval(async () => {
-        await this.checkForMatch(onMatchFound);
+        await this.checkForPartner(onMatchFound, roomId);
       }, 1000);
       
     } catch (error) {
       console.error('❌ Failed to join queue:', error);
       return;
+    }
+  }
+
+  private async checkForPartner(onMatchFound: (roomId: string) => void, myRoomId: string) {
+    try {
+      // Check if someone joined our room
+      const { data: matches, error: matchError } = await this.supabase
+        .from('matches')
+        .select('*')
+        .eq('room_id', myRoomId);
+
+      if (matchError) {
+        console.error('❌ Error checking for partner:', matchError);
+        return;
+      }
+
+      if (matches && matches.length > 0) {
+        console.log('🎉 Found partner in our room!');
+        onMatchFound(myRoomId);
+        this.leaveQueue();
+      }
+    } catch (error) {
+      console.error('❌ Error checking for partner:', error);
     }
   }
 
