@@ -81,7 +81,7 @@ export default function OmeglePage() {
   };
 
   // Toggle tag
-  const toggleTag = (tag: string) => {
+  const toggleTag = (tag) => {
     setSelectedTags(prev => 
       prev.includes(tag) 
         ? prev.filter(t => t !== tag)
